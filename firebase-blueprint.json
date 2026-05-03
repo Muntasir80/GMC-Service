@@ -1,0 +1,138 @@
+{
+  "entities": {
+    "siteContent": {
+      "title": "Site Content",
+      "description": "Dynamic text and configuration for the landing page",
+      "type": "object",
+      "properties": {
+        "heroTitleLine1": { "type": "string" },
+        "heroTitleLine2": { "type": "string" },
+        "heroBadge": { "type": "string" },
+        "heroSubtitle": { "type": "string" },
+        "footerText": { "type": "string" },
+        "logoText": { "type": "string" },
+        "logoIcon": { "type": "string" },
+        "logoImageUrl": { "type": "string" },
+        "contactLocation": { "type": "string" },
+        "contactSlogan": { "type": "string" },
+        "contactPhone": { "type": "string" },
+        "contactWhatsApp": { "type": "string" },
+        "services": { "type": "array" },
+        "features": { "type": "array" },
+        "faqs": { "type": "array" }
+      }
+    },
+    "Product": {
+      "title": "Product",
+      "description": "A product sold or service offered by GMC Service.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Name of the product" },
+        "description": { "type": "string", "description": "Detailed description" },
+        "sellingPrice": { "type": "number", "description": "Price for customers" },
+        "category": { "type": "string", "description": "Product category (e.g. Toners, Components)" },
+        "brand": { "type": "string", "description": "Product brand (e.g. G&G, HP)" },
+        "model": { "type": "string", "description": "Product model (e.g. CF280A)" },
+        "quantity": { "type": "number", "description": "Available stock quantity" },
+        "imageUrl": { "type": "string", "description": "URL or base64 to the product image" },
+        "hasWarranty": { "type": "boolean" },
+        "warrantyDuration": { "type": "string", "description": "e.g. 1 Year, 6 Months" },
+        "serialNumber": { "type": "string", "description": "Serial number for warranty items" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "description", "category", "brand", "model", "sellingPrice", "createdAt", "updatedAt"]
+    },
+    "ProductPrivate": {
+      "title": "Product Private Data",
+      "description": "Sensitive pricing info",
+      "type": "object",
+      "properties": {
+        "purchasePrice": { "type": "number" }
+      },
+      "required": ["purchasePrice"]
+    },
+    "Admin": {
+        "title": "Admin",
+        "description": "Admin user record",
+        "type": "object",
+        "properties": {
+            "email": { "type": "string" },
+            "displayName": { "type": "string" },
+            "username": { "type": "string" },
+            "password": { "type": "string" },
+            "role": { "type": "string", "enum": ["super", "staff"] },
+            "permissions": {
+              "type": "object",
+              "properties": {
+                "canManageProducts": { "type": "boolean" },
+                "canManageSales": { "type": "boolean" },
+                "canManageSite": { "type": "boolean" },
+                "canManageAdmins": { "type": "boolean" },
+                "canApproveDeletions": { "type": "boolean" }
+              }
+            }
+        },
+        "required": ["email", "role"]
+    },
+    "Sale": {
+      "title": "Sale",
+      "description": "A record of a customer transaction",
+      "type": "object",
+      "properties": {
+        "invoiceNo": { "type": "string" },
+        "items": { "type": "array" },
+        "total": { "type": "number" },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "staffId": { "type": "string" },
+        "staffEmail": { "type": "string" },
+        "staffName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["items", "total", "staffId", "invoiceNo", "createdAt"]
+    },
+    "DeletionRequest": {
+      "title": "Deletion Request",
+      "description": "Request to delete a record with peer approval",
+      "type": "object",
+      "properties": {
+        "targetId": { "type": "string" },
+        "targetType": { "type": "string" },
+        "requestedBy": { "type": "string" },
+        "requestedByName": { "type": "string" },
+        "reason": { "type": "string" },
+        "approvals": { "type": "array" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["targetId", "targetType", "requestedBy", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/siteContent/{contentId}": {
+      "schema": "siteContent",
+      "description": "Global site settings"
+    },
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Collection of products and services"
+    },
+    "/products/{productId}/private/pricing": {
+      "schema": "ProductPrivate",
+      "description": "Sensitive pricing info"
+    },
+    "/admins/{adminId}": {
+        "schema": "Admin",
+        "description": "Collection of authorized admin users"
+    },
+    "/sales/{saleId}": {
+      "schema": "Sale",
+      "description": "Collection of sale transactions"
+    },
+    "/deletion_requests/{requestId}": {
+      "schema": "DeletionRequest",
+      "description": "Approval workflow for deletions"
+    }
+  }
+}

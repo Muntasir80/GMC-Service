@@ -1,0 +1,166 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    match /_internal_/connection_test {
+      allow read: if true;
+    }
+
+    // 3. Primitive Definitions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == "mirmuntasiralamehad@gmail.com" ||
+        request.auth.token.email == "computervillage371@gmail.com"
+      ) && isEmailVerified();
+    }
+
+    function isAdmin() {
+      return isSuperAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+    }
+
+    function hasPermission(perm) {
+      return isSuperAdmin() || (
+        isSignedIn() && 
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) && 
+        get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.permissions[perm] == true
+      );
+    }
+
+    // 2. Validation Blueprints
+    function isValidProduct(data) {
+      return data.keys().hasAll(['name', 'description', 'sellingPrice', 'category', 'brand', 'model', 'quantity', 'imageUrl', 'hasWarranty', 'warrantyDuration', 'serialNumber', 'createdAt', 'updatedAt'])
+        && data.keys().size() == 13
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 200
+        && data.description is string && data.description.size() <= 5000
+        && data.sellingPrice is number && data.sellingPrice >= 0
+        && data.category is string && data.category.size() <= 100
+        && data.brand is string && data.brand.size() <= 100
+        && data.model is string && data.model.size() <= 100
+        && data.quantity is number && data.quantity >= 0
+        && data.hasWarranty is bool
+        && data.warrantyDuration is string && data.warrantyDuration.size() <= 50
+        && data.serialNumber is string && data.serialNumber.size() <= 200
+        && data.imageUrl is string && data.imageUrl.size() <= 950000;
+    }
+
+    function isValidProductPrivate(data) {
+      return data.keys().hasAll(['purchasePrice']) && data.keys().size() == 1
+        && data.purchasePrice is number && data.purchasePrice >= 0;
+    }
+
+    function isValidSale(data) {
+      return data.keys().hasAll(['items', 'total', 'customerName', 'customerPhone', 'staffId', 'staffEmail', 'staffName', 'invoiceNo', 'createdAt', 'status'])
+        && data.keys().size() >= 10
+        && data.items is list
+        && data.total is number
+        && data.staffId == request.auth.uid
+        && data.createdAt == request.time
+        && data.status in ['pending', 'completed', 'denied'];
+    }
+
+    function isValidDeletionRequest(data) {
+       return data.keys().hasAll(['targetId', 'targetType', 'requestedBy', 'requestedByName', 'reason', 'approvals', 'status', 'createdAt'])
+         && data.keys().size() == 8
+         && data.targetType in ['sale']
+         && data.requestedBy == request.auth.uid
+         && data.status in ['pending', 'approved', 'executed'];
+    }
+
+    // Site Content Protection
+    match /siteContent/{contentId} {
+      allow read: if true;
+      allow write: if hasPermission('canManageSite');
+    }
+
+    // 1. The Master Gate - Products
+    match /products/{productId} {
+      allow read: if true; 
+      
+      allow create: if hasPermission('canManageProducts') 
+        && isValidId(productId)
+        && isValidProduct(request.resource.data)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+        
+      allow update: if (hasPermission('canManageProducts') || hasPermission('canManageSales'))
+        && isValidId(productId)
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.createdAt == resource.data.createdAt 
+        && (
+          // Full update for product managers
+          (hasPermission('canManageProducts') && isValidProduct(request.resource.data)) ||
+          // Stock update only for sales
+          (hasPermission('canManageSales') && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity', 'updatedAt']))
+        );
+        
+      allow delete: if hasPermission('canManageProducts');
+
+      // Private Pricing Info
+      match /private/pricing {
+        allow read, write: if isAdmin();
+        allow create, update: if isAdmin() && isValidProductPrivate(request.resource.data);
+      }
+    }
+
+    // Sales Collection
+    match /sales/{saleId} {
+      allow read: if isAdmin();
+      allow create: if hasPermission('canManageSales') 
+        && isValidSale(request.resource.data)
+        && (
+          (isSuperAdmin() && request.resource.data.status == 'completed') ||
+          (!isSuperAdmin() && request.resource.data.status == 'pending')
+        );
+      
+      allow update: if (isSuperAdmin() || hasPermission('canManageApprovals'))
+        && (
+          // Case 1: Approval of pending sale
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'approvedBy', 'approvedByName', 'updatedAt'])
+           && request.resource.data.status == 'completed'
+           && resource.data.status == 'pending'
+           && request.auth.uid != resource.data.staffId) ||
+          // Case 2: Marking as denied
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+           && request.resource.data.status == 'denied'
+           && resource.data.status == 'pending')
+        );
+      
+      // DELETION ONLY WITH APPROVAL
+      allow delete: if isAdmin() 
+        && exists(/databases/$(database)/documents/deletion_requests/$(saleId))
+        && get(/databases/$(database)/documents/deletion_requests/$(saleId)).data.status == 'approved';
+    }
+
+    // Admins Collection
+    match /admins/{adminId} {
+      allow read: if isSignedIn();
+      allow write: if hasPermission('canManageAdmins') && isValidId(adminId);
+    }
+
+    // Deletion Requests
+    match /deletion_requests/{requestId} {
+        allow read: if isAdmin();
+        allow create: if isAdmin() && isValidDeletionRequest(request.resource.data);
+        allow update: if isAdmin() 
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['approvals', 'status', 'executedAt'])
+          && request.auth.uid != resource.data.requestedBy;
+        allow delete: if isAdmin();
+    }
+  }
+}

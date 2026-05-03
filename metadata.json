@@ -1,0 +1,6 @@
+{
+  "name": "Grow Mir Computer Service",
+  "description": "Professional IT solutions, computer repair, and sales management system for Chittagong. Features inventory tracking, sales history with secure deletion approval, and staff management.",
+  "requestFramePermissions": ["clipboard-read", "clipboard-write"],
+  "majorCapabilities": []
+}
