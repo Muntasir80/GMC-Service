@@ -257,7 +257,9 @@ export default function App() {
   });
 
     // Admin Email from user request
-    const SUPER_ADMIN_EMAILS = ["mirmuntasiralamehad@gmail.com", "computervillage371@gmail.com"];
+    const SUPER_ADMIN_EMAILS = ["mirmuntasiralamehad@gmail.com"];
+    const isPrimarySuperAdmin = (email?: string | null) => email === "mirmuntasiralamehad@gmail.com";
+    
     const [adminList, setAdminList] = useState<AdminUser[]>([]);
     const [adminTab, setAdminTab] = useState<'products' | 'staff' | 'site' | 'sales' | 'sales-history' | 'approvals'>('products');
   const [deletionRequests, setDeletionRequests] = useState<DeletionRequest[]>([]);
@@ -276,8 +278,8 @@ export default function App() {
     const [showShareModal, setShowShareModal] = useState(false);
 
     const APP_URLS = {
-      development: "https://ais-dev-l7y45xpibz3sxhdcku6eby-612939934035.asia-east1.run.app",
-      shared: "https://ais-pre-l7y45xpibz3sxhdcku6eby-612939934035.asia-east1.run.app"
+      shared: window.location.origin,
+      dev: window.location.origin
     };
 
     useEffect(() => {
@@ -480,17 +482,21 @@ export default function App() {
     const isSuperByEmail = user?.email && SUPER_ADMIN_EMAILS.includes(user.email);
     if (!isSuperByEmail && !userPermissions?.canManageAdmins) return;
     
-    if (!newAdmin.email.includes('@')) {
-        alert("Please enter a valid email");
+    // Email is optional if username is provided
+    if (!newAdmin.email && !newAdmin.username) {
+        alert("Please enter either an email or a username");
         return;
     }
 
+    const effectiveEmail = newAdmin.email.trim().toLowerCase() || `${newAdmin.username.trim().toLowerCase()}@staff.local`;
+    const effectiveUsername = newAdmin.username.trim();
+
     try {
         await addDoc(collection(db, 'admins'), { 
-            email: newAdmin.email.trim().toLowerCase(),
-            username: newAdmin.username.trim(),
+            email: effectiveEmail,
+            username: effectiveUsername,
             password: newAdmin.password,
-            displayName: newAdmin.displayName.trim(),
+            displayName: (newAdmin.displayName || effectiveUsername || effectiveEmail).trim(),
             role: 'staff',
             permissions: {
               canManageProducts: false,
@@ -499,10 +505,11 @@ export default function App() {
               canManageAdmins: false,
               canManageApprovals: false
             },
-            addedBy: user.email,
+            addedBy: user?.email || 'admin',
             createdAt: serverTimestamp()
         });
         setNewAdmin({ email: '', username: '', password: '', displayName: '' });
+        alert(`Staff account created for: ${effectiveUsername || effectiveEmail}`);
     } catch (error) {
         handleFirestoreError(error, OperationType.CREATE, 'admins');
     }
@@ -605,23 +612,32 @@ export default function App() {
     e.preventDefault();
     if (isLoggingIn) return;
     setIsLoggingIn(true);
+    
+    let effectiveEmail = staffLogin.email.trim();
+    
+    // If it's a username (no @), convert to dummy email
+    if (effectiveEmail && !effectiveEmail.includes('@')) {
+      effectiveEmail = `${effectiveEmail.toLowerCase()}@staff.local`;
+    }
+
     try {
       if (isSignUpMode) {
         // Create user with Email/Password
-        await createUserWithEmailAndPassword(auth, staffLogin.email, staffLogin.password);
-        alert("Account created successfully! If your email was pre-approved by an admin, you will be logged in. Otherwise, please contact an administrator to activate your account.");
+        await createUserWithEmailAndPassword(auth, effectiveEmail, staffLogin.password);
+        alert("Account created successfully! If your account was pre-approved by an admin, you will be logged in. Otherwise, please contact an administrator.");
         setIsSignUpMode(false);
       } else {
         // Sign in with Email/Password
-        await signInWithEmailAndPassword(auth, staffLogin.email, staffLogin.password);
+        await signInWithEmailAndPassword(auth, effectiveEmail, staffLogin.password);
         setShowLoginModal(false);
       }
     } catch (error: any) {
       console.error("Auth action failed:", error);
       let message = "Authentication failed. Please check your credentials.";
-      if (error.code === 'auth/email-already-in-use') message = "This email is already in use.";
+      if (error.code === 'auth/email-already-in-use') message = "This identifier is already in use.";
       if (error.code === 'auth/weak-password') message = "Password should be at least 6 characters.";
-      if (error.code === 'auth/invalid-credential' || error.code === 'auth/user-not-found') message = "Invalid email or password.";
+      if (error.code === 'auth/invalid-credential' || error.code === 'auth/user-not-found') message = "Invalid username/email or password.";
+      if (error.code === 'auth/invalid-email') message = "Invalid username or email format.";
       alert(message);
     } finally {
       setIsLoggingIn(false);
@@ -914,10 +930,42 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    const handlePopState = () => {
+      let closed = false;
+      if (showShareModal) { setShowShareModal(false); closed = true; }
+      if (showAdminPanel) { setShowAdminPanel(false); closed = true; }
+      if (showLoginModal) { setShowLoginModal(false); closed = true; }
+      if (selectedSale) { setSelectedSale(null); closed = true; }
+      
+      if (closed) {
+        // Keep the user on the page by pushing state again if they hit back
+        window.history.pushState({ modalClosed: true }, '', window.location.pathname);
+      }
+    };
+
+    if (showShareModal || showAdminPanel || showLoginModal || selectedSale) {
+      // Push state ONLY if we just opened a modal
+      window.history.pushState({ modalOpen: true }, '', window.location.pathname);
+      window.addEventListener('popstate', handlePopState);
+    }
+    
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [showShareModal, showAdminPanel, showLoginModal, selectedSale]);
+
   return (
-    <div className="min-h-screen font-sans selection:bg-emerald-500/30 selection:text-emerald-400 bg-[#050505] text-zinc-100 antialiased">
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.8 }}
+      className="min-h-screen font-sans selection:bg-emerald-500/30 selection:text-emerald-400 bg-[#050505] text-zinc-100 antialiased"
+    >
       {/* Navigation */}
-      <nav className="fixed top-0 left-0 right-0 z-50 bg-[#050505]/80 backdrop-blur-xl border-b border-emerald-500/10">
+      <motion.nav 
+        initial={{ y: -100 }}
+        animate={{ y: 0 }}
+        className="fixed top-0 left-0 right-0 z-50 bg-[#050505]/80 backdrop-blur-xl border-b border-emerald-500/10"
+      >
         <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="w-10 h-10 bg-emerald-500 rounded-lg flex items-center justify-center overflow-hidden">
@@ -948,31 +996,35 @@ export default function App() {
             
             {user ? (
               <div className="flex items-center gap-4">
-                {isAdmin && (
+                {isAdmin ? (
                   <button 
                     onClick={() => setShowAdminPanel(!showAdminPanel)}
-                    className="p-2 rounded-full hover:bg-emerald-500/10 text-emerald-500 transition-all flex items-center gap-2 text-xs uppercase font-bold"
+                    className="p-2 px-4 rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 transition-all flex items-center gap-2 text-xs uppercase font-bold"
                   >
                     <Settings className="w-4 h-4" />
-                    Admin
+                    Dashboard
                   </button>
+                ) : (
+                  <span className="text-xs text-zinc-500">Viewer</span>
                 )}
                 <button 
                   onClick={handleLogout}
-                  className="flex items-center gap-2 hover:text-red-400 transition-colors"
+                  className="flex items-center gap-2 hover:text-red-400 transition-colors bg-white/5 px-4 py-2 rounded-full"
                 >
                   <LogOut className="w-4 h-4" />
                   Sign Out
                 </button>
               </div>
             ) : (
-              <button 
-                onClick={() => setShowLoginModal(true)}
-                className="flex items-center gap-2 hover:text-emerald-400 transition-colors"
-              >
-                <LogIn className="w-4 h-4" />
-                Login
-              </button>
+                <div className="flex items-center gap-2">
+                    <button 
+                        onClick={() => setShowLoginModal(true)}
+                        className="flex items-center gap-2 text-zinc-400 hover:text-emerald-400 transition-colors bg-white/5 px-4 py-2 rounded-full text-sm"
+                    >
+                        <User className="w-4 h-4" />
+                        Staff Login
+                    </button>
+                </div>
             )}
 
             <a 
@@ -989,7 +1041,7 @@ export default function App() {
             {isMenuOpen ? <X /> : <Menu />}
           </button>
         </div>
-      </nav>
+      </motion.nav>
 
       {/* Mobile Menu Overlay */}
       <AnimatePresence>
@@ -1076,12 +1128,12 @@ export default function App() {
                       Site Content
                     </button>
                   )}
-                  {user?.email && SUPER_ADMIN_EMAILS.includes(user.email) && (
+                  {isPrimarySuperAdmin(user?.email) && (
                     <button 
                       onClick={() => setAdminTab('staff')}
                       className={`whitespace-nowrap px-4 py-2 rounded-lg text-xs font-bold uppercase transition-all ${adminTab === 'staff' ? 'bg-emerald-500 text-black' : 'text-zinc-400 hover:text-white'}`}
                     >
-                      Staff
+                      Admin Settings
                     </button>
                   )}
                   {isAdmin && (
@@ -1884,49 +1936,66 @@ export default function App() {
                    </button>
                 </form>
                ) : adminTab === 'staff' ? (
-                <div className="max-w-xl mx-auto space-y-12">
+                <div className="max-w-xl mx-auto space-y-12 pb-12">
                    <div className="space-y-6">
-                      <h3 className="text-2xl font-display font-bold flex items-center gap-3">
-                         <Plus className="text-emerald-500" /> Add New Staff
-                      </h3>
-                      <form onSubmit={handleAddAdmin} className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-2xl font-display font-bold flex items-center gap-3">
+                           <Plus className="text-emerald-500" /> Setup Admin/Staff
+                        </h3>
+                        <span className="text-[10px] bg-white/5 border border-white/10 px-2 py-1 rounded-full text-zinc-500 uppercase font-bold">Email is Optional</span>
+                      </div>
+                      <form onSubmit={handleAddAdmin} className="space-y-4 bg-white/5 p-6 rounded-3xl border border-white/10">
                         <div className="grid grid-cols-2 gap-4">
-                          <input 
-                             required
-                             type="email"
-                             placeholder="Email Address"
-                             value={newAdmin.email}
-                             onChange={e => setNewAdmin({...newAdmin, email: e.target.value})}
-                             className="bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:border-emerald-500 outline-none"
-                          />
-                          <input 
-                             required
-                             placeholder="Username"
-                             value={newAdmin.username}
-                             onChange={e => setNewAdmin({...newAdmin, username: e.target.value})}
-                             className="bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:border-emerald-500 outline-none"
-                          />
+                          <div>
+                            <label className="text-[10px] font-bold uppercase text-zinc-500 ml-1 mb-1 block">Full Name</label>
+                            <input 
+                              required
+                              value={newAdmin.displayName}
+                              onChange={e => setNewAdmin({...newAdmin, displayName: e.target.value})}
+                              className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:border-emerald-500 outline-none text-sm"
+                              placeholder="e.g. John Doe"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold uppercase text-zinc-500 ml-1 mb-1 block">Username (Required if no email)</label>
+                            <input 
+                              value={newAdmin.username}
+                              onChange={e => setNewAdmin({...newAdmin, username: e.target.value})}
+                              className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:border-emerald-500 outline-none text-sm"
+                              placeholder="e.g. johndoe37"
+                            />
+                          </div>
                         </div>
                         <div className="grid grid-cols-2 gap-4">
-                          <input 
-                             required
-                             placeholder="Display Name"
-                             value={newAdmin.displayName}
-                             onChange={e => setNewAdmin({...newAdmin, displayName: e.target.value})}
-                             className="bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:border-emerald-500 outline-none"
-                          />
-                          <input 
-                             required
-                             type="password"
-                             placeholder="Staff Password"
-                             value={newAdmin.password}
-                             onChange={e => setNewAdmin({...newAdmin, password: e.target.value})}
-                             className="bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:border-emerald-500 outline-none"
-                          />
+                          <div>
+                            <label className="text-[10px] font-bold uppercase text-zinc-500 ml-1 mb-1 block">Email (Optional)</label>
+                            <input 
+                              type="email"
+                              value={newAdmin.email}
+                              onChange={e => setNewAdmin({...newAdmin, email: e.target.value})}
+                              className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:border-emerald-500 outline-none text-sm"
+                              placeholder="e.g. john@example.com"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold uppercase text-zinc-500 ml-1 mb-1 block">Initial Password</label>
+                            <input 
+                              required
+                              type="password"
+                              value={newAdmin.password}
+                              onChange={e => setNewAdmin({...newAdmin, password: e.target.value})}
+                              className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:border-emerald-500 outline-none text-sm"
+                              placeholder="Min 6 chars"
+                            />
+                          </div>
                         </div>
-                        <button className="w-full py-4 bg-emerald-500 text-black font-bold rounded-xl hover:bg-emerald-400 transition-all shadow-lg">
-                           Finalize & Add Staff Member
+                        <button className="w-full bg-emerald-500 text-black font-bold py-4 rounded-xl hover:bg-emerald-400 transition-all flex items-center justify-center gap-2">
+                           <Plus className="w-5 h-5" />
+                           Create Staff Account
                         </button>
+                        <p className="text-[10px] text-zinc-500 text-center italic">
+                          Staff can login using either their Email or Username with the password you set.
+                        </p>
                       </form>
                    </div>
 
@@ -2258,15 +2327,15 @@ export default function App() {
               <div className="flex bg-black/40 p-1 rounded-xl mb-6">
                 <button 
                   onClick={() => { setLoginMethod('google'); setIsSignUpMode(false); }}
-                  className={`flex-1 py-2 text-xs font-bold uppercase rounded-lg transition-all ${loginMethod === 'google' ? 'bg-white/10 text-white' : 'text-zinc-500'}`}
+                  className={`flex-1 py-2 text-[10px] font-bold uppercase rounded-lg transition-all ${loginMethod === 'google' ? 'bg-white/10 text-white' : 'text-zinc-500'}`}
                 >
-                  Google
+                  Simple Login
                 </button>
                 <button 
                   onClick={() => setLoginMethod('staff')}
-                  className={`flex-1 py-2 text-xs font-bold uppercase rounded-lg transition-all ${loginMethod === 'staff' ? 'bg-white/10 text-white' : 'text-zinc-500'}`}
+                  className={`flex-1 py-2 text-[10px] font-bold uppercase rounded-lg transition-all ${loginMethod === 'staff' ? 'bg-white/10 text-white' : 'text-zinc-500'}`}
                 >
-                  Email / Password
+                  Username Login
                 </button>
               </div>
 
@@ -2277,21 +2346,21 @@ export default function App() {
                     className="w-full bg-white text-black font-bold py-4 rounded-xl flex items-center justify-center gap-3 hover:bg-zinc-200 transition-all"
                   >
                     <img src="https://www.google.com/favicon.ico" className="w-4 h-4" alt="G" />
-                    Continue with Google
+                    Login with Google
                   </button>
                   <p className="text-[10px] text-zinc-600 text-center uppercase tracking-widest leading-relaxed">
-                    Fastest way to access your account using your Google ID
+                    Access using your pre-approved Gmail address
                   </p>
                 </div>
               ) : (
                 <form onSubmit={handleStaffLogin} className="space-y-4">
                   {isSignUpMode && (
                     <div className="space-y-2">
-                      <label className="text-[10px] uppercase font-bold text-zinc-500 ml-1">Display Name</label>
+                      <label className="text-[10px] uppercase font-bold text-zinc-500 ml-1">Full Name</label>
                       <input 
                         required
                         type="text"
-                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:border-emerald-500 outline-none text-white"
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:border-emerald-500 outline-none text-white text-sm"
                         placeholder="John Doe"
                         value={staffLogin.displayName}
                         onChange={e => setStaffLogin({...staffLogin, displayName: e.target.value})}
@@ -2299,12 +2368,12 @@ export default function App() {
                     </div>
                   )}
                   <div className="space-y-2">
-                    <label className="text-[10px] uppercase font-bold text-zinc-500 ml-1">Email Address</label>
+                    <label className="text-[10px] uppercase font-bold text-zinc-500 ml-1">Username or Email</label>
                     <input 
                       required
-                      type="email"
-                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:border-emerald-500 outline-none text-white"
-                      placeholder="staff@example.com"
+                      type="text"
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:border-emerald-500 outline-none text-white text-sm"
+                      placeholder="e.g. muntasir37"
                       value={staffLogin.email}
                       onChange={e => setStaffLogin({...staffLogin, email: e.target.value})}
                     />
@@ -2314,7 +2383,7 @@ export default function App() {
                     <input 
                       required
                       type="password"
-                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:border-emerald-500 outline-none text-white"
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:border-emerald-500 outline-none text-white text-sm"
                       placeholder="••••••••"
                       value={staffLogin.password}
                       onChange={e => setStaffLogin({...staffLogin, password: e.target.value})}
@@ -2322,18 +2391,18 @@ export default function App() {
                   </div>
                   <button 
                     disabled={isLoggingIn}
-                    className="w-full bg-emerald-500 text-black font-bold py-4 rounded-xl hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/20"
+                    className="w-full bg-emerald-500 text-black font-bold py-4 rounded-xl hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/20 text-sm"
                   >
-                    {isLoggingIn ? 'Processing...' : (isSignUpMode ? 'Create Account' : 'Sign In')}
+                    {isLoggingIn ? 'Verifying...' : (isSignUpMode ? 'Request Account' : 'Sign In to GMC')}
                   </button>
                   
                   <div className="text-center pt-2">
                     <button 
                       type="button"
                       onClick={() => setIsSignUpMode(!isSignUpMode)}
-                      className="text-xs text-zinc-400 hover:text-emerald-500 transition-colors"
+                      className="text-[10px] text-zinc-500 hover:text-emerald-500 transition-colors uppercase font-bold tracking-widest"
                     >
-                      {isSignUpMode ? 'Already have an account? Sign In' : "Don't have an account? Sign Up"}
+                      {isSignUpMode ? 'Wait, I have an account' : "New staff? Register here"}
                     </button>
                   </div>
                 </form>
@@ -2360,9 +2429,9 @@ export default function App() {
             >
               <button 
                 onClick={() => setShowShareModal(false)}
-                className="absolute top-8 right-8 p-3 hover:bg-white/5 rounded-full text-zinc-400"
+                className="absolute top-6 right-6 p-2 bg-white/5 hover:bg-red-500/20 hover:text-red-500 border border-white/10 rounded-full text-zinc-500 transition-all z-10"
               >
-                <X className="w-6 h-6" />
+                <X className="w-5 h-5" />
               </button>
 
               <div className="text-center mb-10 mt-4">
@@ -2411,9 +2480,19 @@ export default function App() {
 
                   <div className="p-6 bg-emerald-500/5 border border-emerald-500/10 rounded-3xl">
                      <p className="text-xs text-emerald-400/80 leading-relaxed italic">
-                        "You don't need external hosting. The link above is your permanent, live application. Share it with your staff or open it on any browser to login."
+                        "Your service is always live at the link above. To allow staff or customers to visit without a login error, please ensure you have set the 'Share' settings to 'Anyone with the link' in the AI Studio menu."
                      </p>
                   </div>
+                </div>
+
+                <div className="pt-4">
+                  <button 
+                    onClick={() => setShowShareModal(false)}
+                    className="w-full py-5 bg-emerald-500 text-black rounded-2xl text-xs font-black uppercase tracking-[0.2em] hover:bg-emerald-400 transition-all flex items-center justify-center gap-3 shadow-xl shadow-emerald-500/10 active:scale-95"
+                  >
+                    <ArrowRight className="w-5 h-5 rotate-180" />
+                    Back to Application
+                  </button>
                 </div>
               </div>
             </motion.div>
@@ -2610,9 +2689,13 @@ export default function App() {
           </div>
 
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-8">
-            <AnimatePresence>
+            <AnimatePresence mode="popLayout">
               {products.length === 0 ? (
-                <div className="col-span-full py-20 text-center border-2 border-dashed border-zinc-900 rounded-[2rem]">
+                <motion.div 
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="col-span-full py-20 text-center border-2 border-dashed border-zinc-900 rounded-[2rem]"
+                >
                   <Package className="w-12 h-12 text-zinc-800 mx-auto mb-4" />
                   <p className="text-zinc-700 font-bold">Our catalog is currently being updated.</p>
                   {isAdmin && (
@@ -2623,15 +2706,18 @@ export default function App() {
                       Add products now
                     </button>
                   )}
-                </div>
+                </motion.div>
               ) : (
                 products.map((prod, index) => (
                   <motion.div
                     key={prod.id}
-                    initial={{ opacity: 0, scale: 0.95 }}
+                    layout
+                    initial={{ opacity: 0, scale: 0.9 }}
                     whileInView={{ opacity: 1, scale: 1 }}
-                    transition={{ delay: index * 0.1 }}
-                    className="group bg-[#0a0a0a] border border-emerald-900/10 rounded-[2rem] overflow-hidden hover:border-emerald-500/30 transition-all flex flex-col"
+                    viewport={{ once: true }}
+                    transition={{ delay: (index % 4) * 0.1 }}
+                    whileHover={{ y: -10 }}
+                    className="group bg-[#0a0a0a] border border-emerald-900/10 rounded-[2rem] overflow-hidden hover:border-emerald-500/30 transition-all flex flex-col hover:shadow-2xl hover:shadow-emerald-500/5"
                   >
                     <div className="aspect-square relative overflow-hidden">
                        <img 
@@ -2702,7 +2788,12 @@ export default function App() {
       {/* Services Grid */}
       <section id="services" className="py-24 bg-[#080808]">
         <div className="max-w-7xl mx-auto px-6">
-          <div className="flex flex-col md:flex-row md:items-end justify-between mb-16 gap-6">
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            className="flex flex-col md:flex-row md:items-end justify-between mb-16 gap-6"
+          >
             <div>
               <h2 className="text-4xl font-display font-bold mb-4">Expert IT Solutions</h2>
               <p className="text-zinc-400 max-w-md">Professional technical assistance for home and business environments.</p>
@@ -2710,16 +2801,17 @@ export default function App() {
             <div className="text-sm font-display text-emerald-500 font-bold uppercase tracking-widest">
               Available &bull; 24/7 Support
             </div>
-          </div>
+          </motion.div>
 
           <div className="grid md:grid-cols-3 gap-8">
             {(siteContent.services || []).map((service, index) => (
               <motion.div
                 key={service.id}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
+                initial={{ opacity: 0, scale: 0.9 }}
+                whileInView={{ opacity: 1, scale: 1 }}
                 viewport={{ once: true }}
-                transition={{ delay: index * 0.2 }}
+                transition={{ delay: index * 0.1 }}
+                whileHover={{ y: -10 }}
                 className="group p-8 bg-[#0a0a0a] border border-emerald-900/20 rounded-3xl hover:border-emerald-500/50 transition-all relative overflow-hidden"
               >
                 <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 blur-3xl group-hover:bg-emerald-500/10 transition-colors pointer-events-none" />
@@ -2758,20 +2850,33 @@ export default function App() {
       {/* Why Choose Us */}
       <section className="py-24 bg-[#080808] border-y border-emerald-900/10">
         <div className="max-w-7xl mx-auto px-6">
-          <div className="text-center mb-16">
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            className="text-center mb-16"
+          >
             <h2 className="text-4xl font-display font-bold mb-4 tracking-tight">Why Choose {siteContent.logoText}?</h2>
             <p className="text-zinc-400">Local expertise meets professional standards.</p>
-          </div>
+          </motion.div>
 
           <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8 text-center">
             {(siteContent.features || []).map((item, i) => (
-              <div key={i} className="p-8 rounded-3xl bg-[#0a0a0a] border border-emerald-900/5 hover:border-emerald-500/20 transition-all">
+              <motion.div 
+                key={i} 
+                initial={{ opacity: 0, scale: 0.9 }}
+                whileInView={{ opacity: 1, scale: 1 }}
+                viewport={{ once: true }}
+                transition={{ delay: i * 0.1 }}
+                whileHover={{ y: -5, borderColor: 'rgba(16, 185, 129, 0.3)' }}
+                className="p-8 rounded-3xl bg-[#0a0a0a] border border-emerald-900/5 hover:border-emerald-500/20 transition-all"
+              >
                 <div className="w-12 h-12 bg-white/5 rounded-xl flex items-center justify-center mb-6 mx-auto text-emerald-500">
                   {getIconComponent(item.icon, "w-6 h-6")}
                 </div>
                 <h3 className="font-bold mb-2">{item.title}</h3>
                 <p className="text-sm text-zinc-500">{item.description}</p>
-              </div>
+              </motion.div>
             ))}
           </div>
         </div>
@@ -2780,10 +2885,24 @@ export default function App() {
       {/* FAQ Section */}
       <section className="py-24 relative overflow-hidden">
         <div className="max-w-3xl mx-auto px-6">
-          <h2 className="text-4xl font-display font-bold mb-12 text-center">Frequently Asked Questions</h2>
+          <motion.h2 
+            initial={{ opacity: 0, scale: 0.95 }}
+            whileInView={{ opacity: 1, scale: 1 }}
+            viewport={{ once: true }}
+            className="text-4xl font-display font-bold mb-12 text-center"
+          >
+            Frequently Asked Questions
+          </motion.h2>
           <div className="space-y-4">
             {(siteContent.faqs || []).map((faq, i) => (
-              <details key={i} className="group bg-[#0a0a0a] border border-emerald-900/10 rounded-2xl overflow-hidden">
+              <motion.details 
+                key={i} 
+                initial={{ opacity: 0, x: i % 2 === 0 ? -20 : 20 }}
+                whileInView={{ opacity: 1, x: 0 }}
+                viewport={{ once: true }}
+                transition={{ delay: i * 0.1 }}
+                className="group bg-[#0a0a0a] border border-emerald-900/10 rounded-2xl overflow-hidden"
+              >
                 <summary className="flex items-center justify-between p-6 cursor-pointer list-none">
                   <span className="font-bold text-zinc-100 group-hover:text-emerald-400 transition-colors">{faq.q}</span>
                   <ChevronRight className="w-5 h-5 text-emerald-500 group-open:rotate-90 transition-transform" />
@@ -2791,7 +2910,7 @@ export default function App() {
                 <div className="px-6 pb-6 text-zinc-400 text-sm leading-relaxed">
                   {faq.a}
                 </div>
-              </details>
+              </motion.details>
             ))}
           </div>
         </div>
@@ -2800,7 +2919,12 @@ export default function App() {
       {/* Footer / Contact */}
       <footer id="contact" className="pt-24 pb-12 bg-[#050505]">
         <div className="max-w-7xl mx-auto px-6">
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-12 mb-16">
+          <motion.div 
+            initial={{ opacity: 0, y: 30 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            className="grid md:grid-cols-2 lg:grid-cols-4 gap-12 mb-16"
+          >
             <div className="lg:col-span-2">
               <div className="flex items-center gap-2 mb-6">
                 <div className="w-8 h-8 bg-emerald-500 rounded flex items-center justify-center overflow-hidden">
@@ -2859,7 +2983,7 @@ export default function App() {
                 </a>
               </div>
             </div>
-          </div>
+          </motion.div>
 
           <div className="pt-12 border-t border-emerald-900/10 flex flex-col md:flex-row justify-between items-center gap-6 text-xs text-zinc-600">
             <div>
@@ -2872,6 +2996,6 @@ export default function App() {
           </div>
         </div>
       </footer>
-    </div>
+    </motion.div>
   );
 }
